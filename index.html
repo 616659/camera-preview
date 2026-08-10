@@ -34,7 +34,6 @@
       margin-bottom: 20px;
     }
 
-    /* Rendering standard 64x64 grid stretched visually to 256x256 using crisp pixelation */
     canvas {
       display: block;
       width: 256px;
@@ -68,6 +67,8 @@
       margin-top: 15px;
       font-size: 0.9rem;
       color: #aaa;
+      text-align: center;
+      max-width: 300px;
     }
   </style>
 </head>
@@ -83,7 +84,6 @@
   <div id="status">Status: Disconnected</div>
 
   <script>
-    // UUIDs matching the Arduino Sketch
     const SERVICE_UUID = "19b10000-e8f2-537e-4f6c-d104768a1214";
     const CHAR_UUID    = "19b10001-e8f2-537e-4f6c-d104768a1214";
 
@@ -92,7 +92,6 @@
     const canvas     = document.getElementById('viewfinder');
     const ctx        = canvas.getContext('2d');
 
-    // Canvas image buffer setup
     const imgData = ctx.createImageData(64, 64);
     let rxBuffer  = new Uint8Array(4096);
     let rxPointer = 0;
@@ -102,48 +101,54 @@
       try {
         statusDiv.innerText = "Status: Searching for device...";
         
-        // 1. Request Bluetooth device
         const device = await navigator.bluetooth.requestDevice({
           filters: [{ name: 'PostureCam-Setup' }],
           optionalServices: [SERVICE_UUID]
         });
 
-        statusDiv.innerText = "Status: Connecting...";
+        device.addEventListener('gattserverdisconnected', onDisconnected);
+
+        statusDiv.innerText = "Status: Connecting GATT server...";
         const server = await device.gatt.connect();
 
-        // 2. Get Primary Service & Characteristic
+        // Small delay to stabilize connection post-GATT handshake
+        await new Promise(r => setTimeout(r, 300));
+
+        statusDiv.innerText = "Status: Fetching camera service...";
         const service = await server.getPrimaryService(SERVICE_UUID);
+
+        statusDiv.innerText = "Status: Subscribing to image stream...";
         const characteristic = await service.getCharacteristic(CHAR_UUID);
 
-        // 3. Listen to Notifications
         await characteristic.startNotifications();
         characteristic.addEventListener('characteristicvaluechanged', handleIncomingPacket);
 
         statusDiv.innerText = "Status: Connected! Streaming live frame...";
         connectBtn.disabled = true;
 
-        device.addEventListener('gattserverdisconnected', () => {
-          statusDiv.innerText = "Status: Disconnected (Posture mode active or signal lost)";
-          connectBtn.disabled = false;
-        });
-
       } catch (err) {
         console.error(err);
         statusDiv.innerText = "Error: " + err.message;
+        connectBtn.disabled = false;
       }
     });
+
+    function onDisconnected(event) {
+      statusDiv.innerText = "Status: Disconnected (Mode changed or signal dropped)";
+      connectBtn.disabled = false;
+    }
 
     function handleIncomingPacket(event) {
       const data = new Uint8Array(event.target.value.buffer);
 
-      // Check for Start Marker [0xFF, 0xD8, 0xFF, 0x00]
+      // Start Marker
       if (data.length === 4 && data[0] === 0xFF && data[1] === 0xD8 && data[2] === 0xFF && data[3] === 0x00) {
         rxPointer = 0;
         receiving = true;
         return;
       }
 
-      // Check for End Marker [0xFF, 0xD9, 0xFF, 0x00]
+      // End Marker
       if (data.length === 4 && data[0] === 0xFF && data[1] === 0xD9 && data[2] === 0xFF && data[3] === 0x00) {
         if (receiving && rxPointer >= 4096) {
           renderFrame(rxBuffer);
@@ -152,7 +157,7 @@
         return;
       }
 
-      // Collect image byte chunks
+      // Read chunk
       if (receiving) {
         if (rxPointer + data.length <= rxBuffer.length) {
           rxBuffer.set(data, rxPointer);
@@ -161,16 +166,15 @@
       }
     }
 
-    // Convert grayscale array (int8 / uint8) into RGBA canvas frame
     function renderFrame(buffer) {
       for (let i = 0; i < 4096; i++) {
-        const val = buffer[i]; // uint8 pixel intensity (0-255)
+        const val = buffer[i];
         const pixelIdx = i * 4;
 
         imgData.data[pixelIdx + 0] = val; // R
         imgData.data[pixelIdx + 1] = val; // G
         imgData.data[pixelIdx + 2] = val; // B
-        imgData.data[pixelIdx + 3] = 255; // Alpha
+        imgData.data[pixelIdx + 3] = 255; // A
       }
       ctx.putImageData(imgData, 0, 0);
     }

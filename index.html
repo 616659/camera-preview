@@ -168,15 +168,24 @@
 
     function renderFrame(buffer) {
       for (let i = 0; i < 4096; i++) {
-        const val = buffer[i];
-        const pixelIdx = i * 4;
+        // Read raw byte from BLE buffer
+        let rawVal = buffer[i];
 
-        imgData.data[pixelIdx + 0] = val; // R
-        imgData.data[pixelIdx + 1] = val; // G
-        imgData.data[pixelIdx + 2] = val; // B
-        imgData.data[pixelIdx + 3] = 255; // A
+        // Interpret byte as signed int8 (-128 to 127)
+        if (rawVal > 127) {
+          rawVal = rawVal - 256;
+        }
+
+        // Map signed range [-128, 127] to unsigned grayscale [0, 255]
+        const val = Math.min(255, Math.max(0, rawVal + 128));
+
+        const pixelIdx = i * 4;
+        imgData.data[pixelIdx + 0] = val; // Red
+        imgData.data[pixelIdx + 1] = val; // Green
+        imgData.data[pixelIdx + 2] = val; // Blue
+        imgData.data[pixelIdx + 3] = 255; // Alpha
       }
-      ctx.putImageData(imgData, 0, 0);
+    ctx.putImageData(imgData, 0, 0);
     }
   </script>
 </body>

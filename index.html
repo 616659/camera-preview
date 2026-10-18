@@ -167,20 +167,19 @@
     }
 
     function renderFrame(buffer) {
+      let ptr = 0;
       for (let y = 0; y < 64; y++) {
         for (let x = 0; x < 64; x++) {
-          const idx = y * 64 + x;
-          let rawVal = buffer[idx];
-    
-          // Reconstruct signed int8 (-128 to 127) to unsigned uint8 (0 to 255)
+          let rawVal = buffer[ptr++];
+          
           if (rawVal > 127) rawVal -= 256;
           const gray = Math.min(255, Math.max(0, rawVal + 128));
     
           const pixelIdx = (y * 64 + x) * 4;
-          imgData.data[pixelIdx + 0] = gray; // Red
-          imgData.data[pixelIdx + 1] = gray; // Green
-          imgData.data[pixelIdx + 2] = gray; // Blue
-          imgData.data[pixelIdx + 3] = 255;  // Alpha
+          imgData.data[pixelIdx + 0] = gray;
+          imgData.data[pixelIdx + 1] = gray;
+          imgData.data[pixelIdx + 2] = gray;
+          imgData.data[pixelIdx + 3] = 255;
         }
       }
       ctx.putImageData(imgData, 0, 0);

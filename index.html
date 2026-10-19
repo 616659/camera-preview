@@ -120,6 +120,10 @@
       line-height: 1.4;
       padding: 0 10px;
     }
+
+    #status.ok {
+      color: #4ade80;
+    }
   </style>
 </head>
 <body>
@@ -144,54 +148,94 @@
     const FRAME_STREAM_UUID = "19b10001-e8f2-537e-4f6c-d104768a1214";
     const COMMAND_CHAR_UUID = "19b10002-e8f2-537e-4f6c-d104768a1214";
 
+    const CMD_START_INFERENCE = 0x01;  // phone -> board
+    const ACK_SWITCHING       = 0x02;  // board -> phone
+
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
     const imgData = ctx.createImageData(64, 64);
+    const statusEl = document.getElementById('status');
+    const connectBtn = document.getElementById('connectBtn');
+    const startBtn = document.getElementById('startInferenceBtn');
 
     let commandChar = null;
     let frameBuffer = new Uint8Array(4096);
     let bufferOffset = 0;
+    let ackReceived = false;
 
-    document.getElementById('connectBtn').addEventListener('click', async () => {
+    function setStatus(text, ok = false) {
+      statusEl.innerText = text;
+      statusEl.classList.toggle('ok', ok);
+    }
+
+    connectBtn.addEventListener('click', async () => {
       try {
+        ackReceived = false;
         const device = await navigator.bluetooth.requestDevice({
           filters: [{ name: 'PostureCam-Setup' }],
           optionalServices: [SERVICE_UUID]
         });
 
-        document.getElementById('status').innerText = "Status: Connecting to PostureCam...";
+        device.addEventListener('gattserverdisconnected', onDisconnected);
+
+        setStatus("Status: Connecting to PostureCam...");
         const server = await device.gatt.connect();
         const service = await server.getPrimaryService(SERVICE_UUID);
 
+        // Command channel: used to send the start command and to receive the board's confirmation
         commandChar = await service.getCharacteristic(COMMAND_CHAR_UUID);
+        await commandChar.startNotifications();
+        commandChar.addEventListener('characteristicvaluechanged', handleCommandNotify);
 
+        // Frame stream
         const streamChar = await service.getCharacteristic(FRAME_STREAM_UUID);
         await streamChar.startNotifications();
         streamChar.addEventListener('characteristicvaluechanged', handleFrameChunk);
 
-        document.getElementById('status').innerText = "Status: Connected! Streaming live preview...";
-        document.getElementById('startInferenceBtn').disabled = false;
-        document.getElementById('connectBtn').style.display = 'none';
+        setStatus("Status: Connected! Streaming live preview...");
+        startBtn.disabled = false;
+        connectBtn.style.display = 'none';
 
       } catch (err) {
         console.error(err);
-        document.getElementById('status').innerText = "Connection Failed: " + err;
+        setStatus("Connection Failed: " + err);
       }
     });
 
-    document.getElementById('startInferenceBtn').addEventListener('click', async () => {
+    startBtn.addEventListener('click', async () => {
       if (!commandChar) return;
 
       try {
-        const cmd = new Uint8Array([0x01]);
-        await commandChar.writeValue(cmd);
-
-        document.getElementById('status').innerText = "🚀 Mode Changed! Arduino is running TFLite Inference locally.";
-        document.getElementById('startInferenceBtn').disabled = true;
+        startBtn.disabled = true;
+        await commandChar.writeValue(new Uint8Array([CMD_START_INFERENCE]));
+        // The board can take a couple of seconds to react (it finishes the current frame first)
+        setStatus("📨 Command sent. Waiting for the board to confirm...");
       } catch (err) {
         console.error("Failed to send command:", err);
+        setStatus("Failed to send command: " + err);
+        startBtn.disabled = false;
       }
     });
+
+    function handleCommandNotify(event) {
+      const value = event.target.value.getUint8(0);
+      if (value === ACK_SWITCHING) {
+        ackReceived = true;
+        setStatus("✅ Confirmed: the board is switching to inference mode. The preview stops now; reset the board to return to setup.", true);
+        startBtn.disabled = true;
+      }
+    }
+
+    function onDisconnected() {
+      if (ackReceived) {
+        // Expected: the board shuts BLE down when entering inference mode
+        setStatus("✅ Inference mode running on the board. Bluetooth closed as expected.", true);
+      } else {
+        setStatus("Status: Disconnected (signal dropped, or the board was reset).");
+        startBtn.disabled = true;
+        connectBtn.style.display = '';
+      }
+    }
 
     function handleFrameChunk(event) {
       const chunk = new Uint8Array(event.target.value.buffer);
@@ -202,9 +246,9 @@
         return;
       }
 
-      // Check end marker [0xFF, 0xD9, 0xFF, 0x00]
+      // Check end marker [0xFF, 0xD9, 0xFF, 0x00]; only draw complete frames
       if (chunk.length === 4 && chunk[0] === 0xFF && chunk[1] === 0xD9) {
-        renderFrame(frameBuffer);
+        if (bufferOffset >= 4096) renderFrame(frameBuffer);
         return;
       }
 

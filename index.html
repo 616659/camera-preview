@@ -2,57 +2,176 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Posture Monitor</title>
+  <!-- Crucial tag for responsive mobile viewport sizing -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Posture Monitor Setup</title>
   <style>
-    body { font-family: sans-serif; background: #121212; color: #fff; text-align: center; padding: 20px; }
-    #canvas { border: 2px solid #444; margin-top: 10px; image-rendering: pixelated; }
-    .btn { padding: 12px 24px; font-size: 16px; margin: 10px; cursor: pointer; border: none; border-radius: 6px; }
-    .btn-blue { background: #007bff; color: white; }
-    .btn-green { background: #28a745; color: white; }
-    .btn:disabled { background: #555; cursor: not-allowed; }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background-color: #121212;
+      color: #f1f1f1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 20px;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 420px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 20px;
+    }
+
+    h1 {
+      font-size: 1.4rem;
+      font-weight: 600;
+      text-align: center;
+      color: #ffffff;
+    }
+
+    .canvas-container {
+      width: 100%;
+      aspect-ratio: 1 / 1;
+      max-width: 320px;
+      background: #1e1e1e;
+      border: 3px solid #333333;
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* Keep Crisp 64x64 Pixelation when scaled up */
+    canvas {
+      width: 100%;
+      height: 100%;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+      display: block;
+    }
+
+    .controls {
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .btn {
+      width: 100%;
+      padding: 16px;
+      font-size: 1rem;
+      font-weight: 600;
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: background-color 0.2s, transform 0.1s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .btn:active {
+      transform: scale(0.98);
+    }
+
+    .btn-blue {
+      background-color: #2563eb;
+      color: #ffffff;
+    }
+
+    .btn-blue:hover {
+      background-color: #1d4ed8;
+    }
+
+    .btn-green {
+      background-color: #16a34a;
+      color: #ffffff;
+    }
+
+    .btn-green:hover {
+      background-color: #15803d;
+    }
+
+    .btn:disabled {
+      background-color: #27272a;
+      color: #71717a;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    #status {
+      font-size: 0.9rem;
+      color: #a1a1aa;
+      text-align: center;
+      line-height: 1.4;
+      padding: 0 10px;
+    }
   </style>
 </head>
 <body>
 
-  <h1>📷 Camera Framing Preview</h1>
-  
-  <canvas id="canvas" width="64" height="64" style="width: 256px; height: 256px;"></canvas>
-  
-  <div>
-    <button id="connectBtn" class="btn btn-blue">Connect Bluetooth Camera</button>
-    <button id="startInferenceBtn" class="btn btn-green" disabled>Start Inference Mode</button>
+  <div class="container">
+    <h1>📷 Camera Framing Preview</h1>
+
+    <div class="canvas-container">
+      <canvas id="canvas" width="64" height="64"></canvas>
+    </div>
+
+    <div class="controls">
+      <button id="connectBtn" class="btn btn-blue">Connect Bluetooth Camera</button>
+      <button id="startInferenceBtn" class="btn btn-green" disabled>Start Inference Mode</button>
+    </div>
+
+    <p id="status">Status: Disconnected</p>
   </div>
-  
-  <p id="status">Status: Disconnected</p>
 
   <script>
-    const SERVICE_UUID        = "19b10000-e8f2-537e-4f6c-d104768a1214";
-    const FRAME_STREAM_UUID   = "19b10001-e8f2-537e-4f6c-d104768a1214";
-    const COMMAND_CHAR_UUID   = "19b10002-e8f2-537e-4f6c-d104768a1214";
+    const SERVICE_UUID      = "19b10000-e8f2-537e-4f6c-d104768a1214";
+    const FRAME_STREAM_UUID = "19b10001-e8f2-537e-4f6c-d104768a1214";
+    const COMMAND_CHAR_UUID = "19b10002-e8f2-537e-4f6c-d104768a1214";
+
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const imgData = ctx.createImageData(64, 64);
 
     let commandChar = null;
+    let frameBuffer = new Uint8Array(4096);
+    let bufferOffset = 0;
 
     document.getElementById('connectBtn').addEventListener('click', async () => {
       try {
         const device = await navigator.bluetooth.requestDevice({
-          filters: [{ name: 'PostureCam' }],
+          filters: [{ name: 'PostureCam-Setup' }],
           optionalServices: [SERVICE_UUID]
         });
 
-        document.getElementById('status').innerText = "Status: Connecting...";
+        document.getElementById('status').innerText = "Status: Connecting to PostureCam...";
         const server = await device.gatt.connect();
         const service = await server.getPrimaryService(SERVICE_UUID);
 
-        // Get Command Characteristic
         commandChar = await service.getCharacteristic(COMMAND_CHAR_UUID);
 
-        // Get Preview Stream Characteristic
         const streamChar = await service.getCharacteristic(FRAME_STREAM_UUID);
         await streamChar.startNotifications();
-        streamChar.addEventListener('characteristicvaluechanged', handleFrameData);
+        streamChar.addEventListener('characteristicvaluechanged', handleFrameChunk);
 
         document.getElementById('status').innerText = "Status: Connected! Streaming live preview...";
         document.getElementById('startInferenceBtn').disabled = false;
+        document.getElementById('connectBtn').style.display = 'none';
 
       } catch (err) {
         console.error(err);
@@ -64,19 +183,53 @@
       if (!commandChar) return;
 
       try {
-        // Send byte 0x01 to trigger INFERENCE mode on the Arduino
         const cmd = new Uint8Array([0x01]);
         await commandChar.writeValue(cmd);
 
-        document.getElementById('status').innerText = "Status: Mode Changed! Arduino running TFLite Inference locally.";
+        document.getElementById('status').innerText = "🚀 Mode Changed! Arduino is running TFLite Inference locally.";
         document.getElementById('startInferenceBtn').disabled = true;
       } catch (err) {
-        console.error("Failed to send mode command:", err);
+        console.error("Failed to send command:", err);
       }
     });
 
-    function handleFrameData(event) {
-      // Your existing canvas frame rendering logic here
+    function handleFrameChunk(event) {
+      const chunk = new Uint8Array(event.target.value.buffer);
+
+      // Check header marker [0xFF, 0xD8, 0xFF, 0x00]
+      if (chunk.length === 4 && chunk[0] === 0xFF && chunk[1] === 0xD8) {
+        bufferOffset = 0;
+        return;
+      }
+
+      // Check end marker [0xFF, 0xD9, 0xFF, 0x00]
+      if (chunk.length === 4 && chunk[0] === 0xFF && chunk[1] === 0xD9) {
+        renderFrame(frameBuffer);
+        return;
+      }
+
+      // Collect payload bytes
+      if (bufferOffset + chunk.length <= 4096) {
+        frameBuffer.set(chunk, bufferOffset);
+        bufferOffset += chunk.length;
+      }
+    }
+
+    function renderFrame(buffer) {
+      for (let i = 0; i < 4096; i++) {
+        let rawVal = buffer[i];
+
+        // Convert int8 (-128..127) to uint8 (0..255)
+        if (rawVal > 127) rawVal -= 256;
+        const gray = Math.min(255, Math.max(0, rawVal + 128));
+
+        const pixelIdx = i * 4;
+        imgData.data[pixelIdx + 0] = gray;
+        imgData.data[pixelIdx + 1] = gray;
+        imgData.data[pixelIdx + 2] = gray;
+        imgData.data[pixelIdx + 3] = 255;
+      }
+      ctx.putImageData(imgData, 0, 0);
     }
   </script>
 </body>
